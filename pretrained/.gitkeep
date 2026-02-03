@@ -1,0 +1,2 @@
+# This directory stores pretrained models (HuBERT, RMVPE, etc.)
+# Download using: python scripts/download_pretrained.py
