@@ -1,5 +1,3 @@
-"""Gradio UI for RVC Voice Cloning System."""
-
 import logging
 import os
 import tempfile
@@ -9,8 +7,8 @@ from typing import List, Optional, Tuple
 import gradio as gr
 import numpy as np
 
-from core.training import train_rvc_model, TrainingConfig
-from core.inference import VoiceConverter
+from core.training.trainer import train_rvc_model, TrainingConfig
+from core.inference.converter import VoiceConverter
 from utils.device import get_device, log_device_info, get_device_name
 from utils.registry import VoiceRegistry, discover_voices
 from core.audio.utils import validate_audio_file
@@ -60,6 +58,16 @@ def train_voice_ui(
         return "❌ Error: Please enter a person/speaker name.", ""
     
     person_name = person_name.strip()
+    
+    # Convert Gradio file objects to paths
+    audio_paths = []
+    for f in audio_files:
+        if hasattr(f, "name"):
+            audio_paths.append(f.name)
+        else:
+            audio_paths.append(str(f))
+            
+    audio_files = audio_paths
     
     # Validate audio files
     invalid_files = []
@@ -241,15 +249,31 @@ with gr.Blocks(title="RVC Voice Cloning System") as app:
                         info="Unique identifier for this voice"
                     )
                     
+                    epochs_input = gr.Slider(
+                        minimum=10,
+                        maximum=5000,
+                        value=50,
+                        step=10,
+                        label="Epochs",
+                        info="Number of training epochs (10-5000)"
+                    )
+                    
+                    # Mock Mode Warning
+                    try:
+                        from core.training.trainer import HA_RVC
+                        if not HA_RVC:
+                            gr.Markdown(
+                                """
+                                > [!WARNING]
+                                > **Running in Mock Mode**
+                                > RVC dependencies are missing on this system. Training and inference will be simulated.
+                                > Please use Google Colab for real results.
+                                """
+                            )
+                    except ImportError:
+                        pass
+                    
                     with gr.Accordion("Advanced Training Settings", open=False):
-                        epochs_input = gr.Slider(
-                            minimum=10,
-                            maximum=200,
-                            value=50,
-                            step=10,
-                            label="Epochs",
-                            info="Number of training epochs"
-                        )
                         batch_size_input = gr.Slider(
                             minimum=1,
                             maximum=16,
@@ -278,17 +302,15 @@ with gr.Blocks(title="RVC Voice Cloning System") as app:
                         interactive=False,
                     )
             
-            train_button.click(
-                fn=train_voice_ui,
-                inputs=[
-                    audio_input,
-                    person_name_input,
-                    epochs_input,
-                    batch_size_input,
-                    learning_rate_input,
-                ],
-                outputs=[training_status, training_logs],
-            )
+            # Wrapper to update dropdown after training
+            def train_and_update(*args):
+                status, logs = train_voice_ui(*args)
+                new_voices = get_available_voices()
+                # Return status, logs, and updated dropdown
+                return status, logs, gr.Dropdown.update(choices=new_voices, value=args[1]) # Select the new voice
+
+            # train_button.click moved to end of file to access voice_dropdown
+
         
         # Inference Tab
         with gr.Tab("🎭 Inference"):
@@ -306,7 +328,7 @@ with gr.Blocks(title="RVC Voice Cloning System") as app:
                     source_audio_input = gr.Audio(
                         label="Source Audio",
                         type="filepath",
-                        sources=["upload", "microphone"],
+                        # sources=["upload", "microphone"], # Gradio 3 default includes both or use source="upload"
                     )
                     
                     voice_dropdown = gr.Dropdown(
@@ -382,6 +404,19 @@ with gr.Blocks(title="RVC Voice Cloning System") as app:
                 All code lives in this GitHub repository - no duplicate logic!
                 """
             )
+            
+    # Event handlers defined here to ensure all components are in scope
+    train_button.click(
+        fn=train_and_update,
+        inputs=[
+            audio_input,
+            person_name_input,
+            epochs_input,
+            batch_size_input,
+            learning_rate_input,
+        ],
+        outputs=[training_status, training_logs, voice_dropdown],
+    )
 
 
 if __name__ == "__main__":
@@ -397,7 +432,7 @@ if __name__ == "__main__":
     share_mode = os.environ.get("GRADIO_SHARE", "False").lower() == "true" or is_colab
     
     # Launch app
-    app.launch(
+    app.queue().launch(
         server_name="0.0.0.0",  # Allow external access
         server_port=7860,
         share=share_mode,  # Enable share in Colab or if GRADIO_SHARE=True

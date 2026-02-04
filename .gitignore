@@ -5,38 +5,43 @@ __pycache__/
 *.so
 .Python
 env/
-venv/
-ENV/
 build/
+develop-eggs/
 dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
 *.egg-info/
+.installed.cfg
+*.egg
 
-# Models and data
-models/*/
-!models/.gitkeep
+# Virtual Environment
+venv/
+.venv/
+
+# RVC Specific - Heavy Files
+models/*
+!models/.keep
+datasets/*
+!datasets/.keep
 pretrained/*
-!pretrained/.gitkeep
-*.pth
-*.ckpt
-*.pt
-*.wav
-*.mp3
-*.flac
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
+!pretrained/.keep
+outputs/*
+!outputs/.keep
+weights/
 logs/
 
+# IDEs
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
 # Colab
-*.ipynb_checkpoints/
+sample_data/

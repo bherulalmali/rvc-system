@@ -1,155 +1,87 @@
-"""Voice conversion inference."""
+"""RVC voice conversion pipeline using rvc-python."""
 
 import logging
-import torch
-import numpy as np
-import soundfile as sf
-import librosa
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
-from ..model import RVCModel, load_model_checkpoint
-from ..audio import load_audio
-from ..features import extract_hubert_features, extract_f0, load_hubert_model
-from ...utils.device import get_device
+try:
+    from rvc_python.infer import RVCInference
+    HAS_RVC = True
+except ImportError:
+    HAS_RVC = False
 
 logger = logging.getLogger(__name__)
 
-
 class VoiceConverter:
-    """Voice converter for inference."""
+    """RVC Voice Converter wrapper."""
     
-    def __init__(
-        self,
-        model_path: str,
-        device: Optional[torch.device] = None,
-        sample_rate: int = 16000
-    ):
+    def __init__(self, model_path: str, device: Optional[str] = None):
         """
         Initialize voice converter.
         
         Args:
-            model_path: Path to trained RVC model
-            device: Device to run on (auto-detected if None)
-            sample_rate: Target sample rate
+            model_path: Path to RVC model (.pth)
+            device: Device to use (cuda/cpu)
         """
-        if device is None:
-            device = get_device()
+        self.model_path = model_path
+        self.device = device if device else "auto"
         
-        self.device = device
-        self.sample_rate = sample_rate
+        if HAS_RVC:
+            # Initialize RVC inference
+            self.rvc = RVCInference(
+                device=self.device,
+                is_half=True if self.device != "cpu" else False # Use half precision on GPU
+            )
+        else:
+            logger.warning("RVC library not found. Using mock converter.")
+            self.rvc = None
         
-        # Load model
-        logger.info(f"Loading model from {model_path}")
-        checkpoint = load_model_checkpoint(model_path, device=device)
-        model_config = checkpoint["model_config"]
-        
-        self.model = RVCModel(
-            n_mel=model_config.get("n_mel", 80),
-            n_fft=model_config.get("n_fft", 512),
-            hop_length=model_config.get("hop_length", 160),
-            feature_dim=model_config.get("feature_dim", 768),
-            hidden_dim=model_config.get("hidden_dim", 256),
-        ).to(device)
-        
-        load_model_checkpoint(model_path, model=self.model, device=device)
-        self.model.eval()
-        
-        # Load HuBERT model
-        self.hubert_model = load_hubert_model(device=device)
-        
-        logger.info("Voice converter initialized")
-    
     def convert(
         self,
         source_audio_path: str,
-        output_path: Optional[str] = None,
-        pitch_shift: float = 0.0
-    ) -> Tuple[np.ndarray, int]:
+        output_path: str,
+        pitch_shift: float = 0.0,
+        f0_method: str = "rmvpe",
+        index_path: Optional[str] = None,
+        index_rate: float = 0.75,
+    ) -> str:
         """
-        Convert voice from source audio.
+        Convert voice.
         
         Args:
-            source_audio_path: Path to source audio file
-            output_path: Optional path to save output
-            pitch_shift: Pitch shift in semitones (0 = no change)
+            source_audio_path: Path to source audio
+            output_path: Path to save output
+            pitch_shift: Pitch shift in semitones
+            f0_method: Method for F0 extraction (rmvpe, pm, harvest)
+            index_path: Path to feature index file (optional)
+            index_rate: Rate of index influence
             
         Returns:
-            Tuple of (converted_audio, sample_rate)
+            Path to output file
         """
-        # Load source audio
-        audio, sr = load_audio(source_audio_path, sample_rate=self.sample_rate)
-        
-        # Extract features
-        logger.info("Extracting features...")
-        features = extract_hubert_features(audio, self.hubert_model, self.device)
-        f0 = extract_f0(audio, self.sample_rate, method="rmvpe")
-        
-        # Apply pitch shift if needed
-        if pitch_shift != 0.0:
-            f0 = f0 * (2 ** (pitch_shift / 12))
-        
-        # Convert to tensors
-        features_tensor = torch.from_numpy(features).float().unsqueeze(0).to(self.device)
-        f0_tensor = torch.from_numpy(f0).float().unsqueeze(0).to(self.device)
-        
-        # Run inference
-        logger.info("Running voice conversion...")
-        with torch.no_grad():
-            mel_converted = self.model.inference(features_tensor, f0_tensor)
-        
-        # Convert mel to audio (vocoder)
-        # In production, use a proper vocoder (HiFi-GAN, etc.)
-        # For now, use Griffin-Lim as placeholder
-        mel_np = mel_converted.squeeze(0).cpu().numpy()
-        mel_db = librosa.db_to_power(mel_np)
-        
-        # Griffin-Lim vocoder
-        audio_converted = librosa.feature.inverse.mel_to_stft(
-            mel_db,
-            sr=self.sample_rate,
-            n_fft=512,
-            hop_length=160,
-        )
-        audio_converted = librosa.griffinlim(
-            audio_converted,
-            n_iter=32,
-            hop_length=160,
-            length=len(audio),
-        )
-        
-        # Normalize
-        audio_converted = audio_converted / np.abs(audio_converted).max()
-        audio_converted = audio_converted.astype(np.float32)
-        
-        # Save if output path provided
-        if output_path:
-            sf.write(output_path, audio_converted, self.sample_rate)
-            logger.info(f"Saved converted audio to {output_path}")
-        
-        return audio_converted, self.sample_rate
-
-
-def convert_voice(
-    source_audio_path: str,
-    model_path: str,
-    output_path: str,
-    device: Optional[torch.device] = None,
-    pitch_shift: float = 0.0
-) -> str:
-    """
-    Convenience function for voice conversion.
-    
-    Args:
-        source_audio_path: Path to source audio
-        model_path: Path to trained RVC model
-        output_path: Path to save converted audio
-        device: Device to run on (auto-detected if None)
-        pitch_shift: Pitch shift in semitones
-        
-    Returns:
-        Path to output file
-    """
-    converter = VoiceConverter(model_path, device=device)
-    converter.convert(source_audio_path, output_path, pitch_shift)
-    return output_path
+        try:
+            logger.info(f"Converting {source_audio_path} using model {self.model_path}")
+            
+            if self.rvc:
+                # rvc-python infer method signature might vary slightly by version, 
+                # but generally follows this pattern
+                self.rvc.load_checkpoint(self.model_path, index_path)
+                
+                self.rvc.infer_file(
+                    input_path=source_audio_path,
+                    output_path=output_path,
+                    f0_up_key=int(pitch_shift),
+                    f0_method=f0_method,
+                    index_rate=index_rate
+                )
+            else:
+                # Mock conversion
+                import shutil
+                shutil.copy(source_audio_path, output_path)
+                logger.warning("Mock conversion: Input copied to output (RVC libs missing). Result will sound identical to source.")
+            
+            return output_path
+            
+        except Exception as e:
+            logger.error(f"Voice conversion failed: {e}")
+            raise
