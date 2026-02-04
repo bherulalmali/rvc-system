@@ -18,22 +18,32 @@ def run_local_test():
     if not os.path.exists(RVC_BACKEND_DIR):
         print("📥 Cloning training backend...")
         subprocess.run(["git", "clone", "https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI.git", RVC_BACKEND_DIR], check=True)
-        if os.path.exists(os.path.join(RVC_BACKEND_DIR, "requirements.txt")):
-            # Patch requirements to remove aria2 on Mac (it fails to build)
-            req_path = os.path.join(RVC_BACKEND_DIR, "requirements.txt")
-            with open(req_path, "r") as f:
-                content = f.read()
-            # Comment out aria2 if present
-            content = content.replace("aria2", "# aria2")
-            with open(req_path, "w") as f:
-                f.write(content)
-                
-        print("📦 Installing base requirements...")
-        subprocess.run(f"cd {RVC_BACKEND_DIR} && {sys.executable} -m pip install -r requirements.txt", shell=True, check=True)
+    
+    # ALWAYS ensure requirements are patched, even if directory exists (in case of re-runs)
+    if os.path.exists(os.path.join(RVC_BACKEND_DIR, "requirements.txt")):
+        print("🔧 Patching requirements.txt to avoid conflicts...")
+        req_path = os.path.join(RVC_BACKEND_DIR, "requirements.txt")
+        with open(req_path, "r") as f:
+            lines = f.readlines()
+        
+        # Filter out problematic dependencies to install them manually later
+        # aria2: fails on Mac, sometimes issues on Colab
+        # fairseq: strictly pinned causing conflicts
+        # faiss: explicitly handled later
+        # numba/llvmlite: often conflict
+        problematic = ["aria2", "fairseq", "faiss", "numba", "llvmlite"]
+        new_lines = [line for line in lines if not any(p in line for p in problematic)]
+        
+        with open(req_path, "w") as f:
+            f.writelines(new_lines)
+            
+    print("📦 Installing base requirements...")
+    subprocess.run(f"cd {RVC_BACKEND_DIR} && {sys.executable} -m pip install -r requirements.txt", shell=True, check=True)
     
     print("🔧 Verifying training dependencies (simulating Colab fix)...")
     # Installing in the CURRENT environment (venv)
-    subprocess.run(f"{sys.executable} -m pip install faiss-cpu fairseq>=0.12.2 praat-parselmouth pyworld --no-cache-dir", shell=True, check=True)
+    # Re-adding stripped dependencies with safer constraints
+    subprocess.run(f"{sys.executable} -m pip install faiss-cpu fairseq>=0.12.2 praat-parselmouth pyworld numba llvmlite --no-cache-dir", shell=True, check=True)
     subprocess.run(f"{sys.executable} -m pip install protobuf==3.20.0", shell=True, check=True)
 
     # 2. Prepare Dataset
@@ -73,11 +83,9 @@ def run_local_test():
             return result
 
         # Extract F0
-        # NOTE: Using 'python' might pick up system python if not careful, 
-        # so we use sys.executable to stay in venv
         python_cmd = sys.executable 
         
-        print("--- Testing Extract F0 (This failed for you before) ---")
+        print("--- Testing Extract F0 ---")
         run_cmd(f"{python_cmd} infer/modules/train/extract/extract_f0_print.py '{dataset_abs_path}' 2 rmvpe")
         
         print("--- Testing Extract Features ---")
