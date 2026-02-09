@@ -193,13 +193,15 @@ else:
 
     GD_OUT = f"{GLOBAL_DIR}/{WORK_ID}"
     os.makedirs(GD_OUT, exist_ok=True)
-    FINAL_PTH = sorted(glob.glob(f"weights/{WORK_ID}*.pth"))
-    # Recursively find if not in standard folder
-    if not FINAL_PTH: FINAL_PTH = sorted(glob.glob(f"**/weights/{WORK_ID}*.pth", recursive=True))
-    
-    FINAL_IDX = sorted(glob.glob(os.path.join(L_ABS, "*.index")))
-    if FINAL_PTH: shutil.copy(FINAL_PTH[-1], os.path.join(GD_OUT, "model.pth"))
-    if FINAL_IDX: shutil.copy(FINAL_IDX[-1], os.path.join(GD_OUT, "features.index"))
+    # Search aggressively for trained weight
+    FINAL_PTH = sorted(glob.glob(f"weights/{WORK_ID}*.pth") + glob.glob(f"**/weights/{WORK_ID}*.pth", recursive=True))
+    FINAL_IDX = sorted(glob.glob(f"{L_ABS}/*.index"))
+    if FINAL_PTH:
+        shutil.copy(FINAL_PTH[-1], os.path.join(GD_OUT, "model.pth"))
+        print(f"   💾 Saved weight: {FINAL_PTH[-1]} -> {GD_OUT}/model.pth")
+    if FINAL_IDX:
+        shutil.copy(FINAL_IDX[-1], os.path.join(GD_OUT, "features.index"))
+        print(f"   💾 Saved index: {FINAL_IDX[-1]} -> {GD_OUT}/features.index")
     print(f"✅ Secured at: {GD_OUT}")
 '''
 
@@ -218,27 +220,24 @@ os.chdir("/content/audio-core")
 DP = base64.b64decode("QXVkaW9fTW9kZWxz").decode("utf-8")
 GLOBAL_DIR = os.path.join("/content/drive/MyDrive", DP)
 
-print(f"📂 Current Dir: {os.getcwd()}")
-print(f"📂 Drive Dir Check: {GLOBAL_DIR} (Exists: {os.path.exists(GLOBAL_DIR)})")
-
 print("🔍 Scanning for models...")
 MODELS = []
-# 1. Check local weights recursively
-for p in glob.glob("**/weights/*.pth", recursive=True) + glob.glob("weights/*.pth"):
-    if os.path.isfile(p):
-        MODELS.append({"name": f"[Local] {os.path.basename(p)}", "path": os.path.abspath(p)})
+# Locations to scan
+SCAN_PATHS = ["weights", "assets/weights", "models", GLOBAL_DIR]
 
-# 2. Check Google Drive recursively
-if os.path.exists(GLOBAL_DIR):
-    for root, dirs, files_list in os.walk(GLOBAL_DIR):
-        for f in files_list:
-            if f.endswith(".pth") or f == "model.pth":
-                full_p = os.path.join(root, f)
-                rel_p = os.path.relpath(full_p, GLOBAL_DIR)
-                MODELS.append({"name": f"[Drive] {rel_p}", "path": full_p})
+for s_path in SCAN_PATHS:
+    if os.path.exists(s_path):
+        for root, _, files_list in os.walk(s_path):
+            for f in files_list:
+                if f.endswith(".pth") or f == "model.pth":
+                    full_p = os.path.abspath(os.path.join(root, f))
+                    # Label construction
+                    prefix = "[Drive]" if GLOBAL_DIR in full_p else "[Local]"
+                    rel = os.path.relpath(full_p, s_path) if s_path != GLOBAL_DIR else os.path.basename(os.path.dirname(full_p))
+                    MODELS.append({"name": f"{prefix} {rel}/{f}", "path": full_p})
 
 # Remove duplicates
-seen = set()
+seen = {m['path'] for m in []}
 UNIQUE_MODELS = []
 for m in MODELS:
     if m['path'] not in seen:
@@ -246,26 +245,37 @@ for m in MODELS:
         seen.add(m['path'])
 
 if not UNIQUE_MODELS:
-    print("❌ No models found.")
-    print("Debug Info:")
-    print(f"   weights folder: {os.path.exists('weights')}")
-    if os.path.exists('weights'): print(f"   weights contents: {os.listdir('weights')}")
-    if os.path.exists(GLOBAL_DIR): print(f"   Drive contents: {os.listdir(GLOBAL_DIR)}")
+    print("❌ No models automatically detected.")
+    MANUAL_PATH = input("Please enter absolute path to model.pth manually: ")
+    if os.path.exists(MANUAL_PATH):
+        SELECTED_PATH = MANUAL_PATH
+        VOICE_NAME = "manual_voice"
+    else:
+        print("🛑 Error: Manual path does not exist.")
+        SELECTED_PATH = None
 else:
     for idx, m in enumerate(UNIQUE_MODELS): print(f"{idx}: {m['name']}")
-    choice = int(input("Select Model ID: ") or 0)
-    SELECTED = UNIQUE_MODELS[choice]
-    print(f"🎯 Loading: {SELECTED['name']} ({SELECTED['path']})")
-    
+    choice = input("Select Model ID (or enter absolute path): ")
+    if choice.isdigit() and int(choice) < len(UNIQUE_MODELS):
+        SELECTED_PATH = UNIQUE_MODELS[int(choice)]['path']
+    elif os.path.exists(choice):
+        SELECTED_PATH = choice
+    else:
+        SELECTED_PATH = UNIQUE_MODELS[0]['path']
+        print(f"⚠️ Invalid choice, defaulting to: {SELECTED_PATH}")
+
+if SELECTED_PATH:
+    print(f"🎯 Ready: {SELECTED_PATH}")
     uploaded = files.upload()
     if uploaded:
         src_f = list(uploaded.keys())[0]
-        out_f = "/content/output_converted.wav"
+        out_f = f"/content/output_{os.path.basename(src_f)}"
+        print(f"🪄 Converting {src_f}...")
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        runner = VoiceConverter(SELECTED['path'], device=device)
+        runner = VoiceConverter(SELECTED_PATH, device=device)
         runner.convert(src_f, out_f)
         files.download(out_f)
-        print(f"✅ Download ready: {out_f}")
+        print(f"✅ Conversion complete: {out_f}")
 '''
 
 cells.append({
@@ -282,4 +292,4 @@ notebook = {
 
 with open('/Users/bherulal.mali/Downloads/rvcStudioAG/RVCVoiceCloning/notebooks/rvc_colab.ipynb', 'w', encoding='utf-8') as f:
     json.dump(notebook, f, indent=2)
-print("SUCCESS (v20 Deploy)")
+print("SUCCESS (v21 Deploy)")
