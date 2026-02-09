@@ -5,7 +5,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 now_dir = os.getcwd()
-sys.path.append(os.path.join(now_dir))
+sys.path.insert(0, now_dir)
 
 import datetime
 

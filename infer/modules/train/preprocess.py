@@ -4,8 +4,20 @@ import sys
 
 from scipy import signal
 
+
 now_dir = os.getcwd()
-sys.path.append(now_dir)
+sys.path.insert(0, now_dir) # FORCE local path first
+print("DEBUG: sys.path:", sys.path)
+print("DEBUG: os.getcwd():", now_dir)
+
+try:
+    import infer
+    print("DEBUG: infer package found at:", getattr(infer, "__file__", "unknown"))
+    import infer.lib
+    print("DEBUG: infer.lib found:", getattr(infer.lib, "__file__", "unknown"))
+except ImportError as e:
+    print("DEBUG: Import check failed:", e)
+
 print(*sys.argv[1:])
 inp_root = sys.argv[1]
 sr = int(sys.argv[2])

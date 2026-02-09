@@ -1,6 +1,7 @@
-import os
 import sys
 import traceback
+import os
+sys.path.insert(0, os.getcwd())
 
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"

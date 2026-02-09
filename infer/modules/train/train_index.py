@@ -1,6 +1,7 @@
 
-import os
 import sys
+import os
+sys.path.insert(0, os.getcwd())
 import time
 import logging
 import faiss
