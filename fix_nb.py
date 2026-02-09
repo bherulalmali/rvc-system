@@ -194,6 +194,9 @@ else:
     GD_OUT = f"{GLOBAL_DIR}/{WORK_ID}"
     os.makedirs(GD_OUT, exist_ok=True)
     FINAL_PTH = sorted(glob.glob(f"weights/{WORK_ID}*.pth"))
+    # Recursively find if not in standard folder
+    if not FINAL_PTH: FINAL_PTH = sorted(glob.glob(f"**/weights/{WORK_ID}*.pth", recursive=True))
+    
     FINAL_IDX = sorted(glob.glob(os.path.join(L_ABS, "*.index")))
     if FINAL_PTH: shutil.copy(FINAL_PTH[-1], os.path.join(GD_OUT, "model.pth"))
     if FINAL_IDX: shutil.copy(FINAL_IDX[-1], os.path.join(GD_OUT, "features.index"))
@@ -215,34 +218,49 @@ os.chdir("/content/audio-core")
 DP = base64.b64decode("QXVkaW9fTW9kZWxz").decode("utf-8")
 GLOBAL_DIR = os.path.join("/content/drive/MyDrive", DP)
 
+print(f"📂 Current Dir: {os.getcwd()}")
+print(f"📂 Drive Dir Check: {GLOBAL_DIR} (Exists: {os.path.exists(GLOBAL_DIR)})")
+
 print("🔍 Scanning for models...")
 MODELS = []
-# 1. Check local weights
-for p in glob.glob("weights/*.pth"):
-    MODELS.append({"name": f"[Local] {os.path.basename(p)}", "path": p})
+# 1. Check local weights recursively
+for p in glob.glob("**/weights/*.pth", recursive=True) + glob.glob("weights/*.pth"):
+    if os.path.isfile(p):
+        MODELS.append({"name": f"[Local] {os.path.basename(p)}", "path": os.path.abspath(p)})
 
-# 2. Check Google Drive
+# 2. Check Google Drive recursively
 if os.path.exists(GLOBAL_DIR):
-    for entry in os.listdir(GLOBAL_DIR):
-        m_dir = os.path.join(GLOBAL_DIR, entry)
-        if os.path.isdir(m_dir):
-            pth = os.path.join(m_dir, "model.pth")
-            if os.path.exists(pth):
-                MODELS.append({"name": f"[Drive] {entry}", "path": pth})
+    for root, dirs, files_list in os.walk(GLOBAL_DIR):
+        for f in files_list:
+            if f.endswith(".pth") or f == "model.pth":
+                full_p = os.path.join(root, f)
+                rel_p = os.path.relpath(full_p, GLOBAL_DIR)
+                MODELS.append({"name": f"[Drive] {rel_p}", "path": full_p})
 
-if not MODELS:
-    print("❌ No models found in 'weights/' or Google Drive.")
+# Remove duplicates
+seen = set()
+UNIQUE_MODELS = []
+for m in MODELS:
+    if m['path'] not in seen:
+        UNIQUE_MODELS.append(m)
+        seen.add(m['path'])
+
+if not UNIQUE_MODELS:
+    print("❌ No models found.")
+    print("Debug Info:")
+    print(f"   weights folder: {os.path.exists('weights')}")
+    if os.path.exists('weights'): print(f"   weights contents: {os.listdir('weights')}")
+    if os.path.exists(GLOBAL_DIR): print(f"   Drive contents: {os.listdir(GLOBAL_DIR)}")
 else:
-    for idx, m in enumerate(MODELS): print(f"{idx}: {m['name']}")
+    for idx, m in enumerate(UNIQUE_MODELS): print(f"{idx}: {m['name']}")
     choice = int(input("Select Model ID: ") or 0)
-    SELECTED = MODELS[choice]
-    print(f"🎯 Loading: {SELECTED['name']}")
+    SELECTED = UNIQUE_MODELS[choice]
+    print(f"🎯 Loading: {SELECTED['name']} ({SELECTED['path']})")
     
     uploaded = files.upload()
     if uploaded:
         src_f = list(uploaded.keys())[0]
         out_f = "/content/output_converted.wav"
-        # Fix: torch.cuda.is_available() logic
         device = "cuda" if torch.cuda.is_available() else "cpu"
         runner = VoiceConverter(SELECTED['path'], device=device)
         runner.convert(src_f, out_f)
@@ -264,4 +282,4 @@ notebook = {
 
 with open('/Users/bherulal.mali/Downloads/rvcStudioAG/RVCVoiceCloning/notebooks/rvc_colab.ipynb', 'w', encoding='utf-8') as f:
     json.dump(notebook, f, indent=2)
-print("SUCCESS (v19 Deploy)")
+print("SUCCESS (v20 Deploy)")
