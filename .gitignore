@@ -11,7 +11,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# lib/ # Removed - Too aggressive, ignores infer/lib/
 lib64/
 parts/
 sdist/
