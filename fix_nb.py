@@ -16,8 +16,8 @@ cells = []
 cells.append({
     'cell_type': 'markdown', 'metadata': {},
     'source': to_lines('''
-# 📊 Audio Research Toolbox v4 - Google Colab
-Utility for high-performance audio data processing.
+# 📊 RVC Voice Cloning Toolbox v4 - Google Colab
+Utility for high-performance audio data processing and voice conversion.
 ''')
 })
 
@@ -29,7 +29,8 @@ from google.colab import drive
 import os, base64
 from pathlib import Path
 drive.mount("/content/drive")
-DP = base64.b64decode("QXVkaW9fTW9kZWxz").decode("utf-8")
+# DP: RVCVoiceCloning
+DP = base64.b64decode("UlZDVm9pY2VDbG9uaW5n").decode("utf-8")
 GLOBAL_DIR = os.path.join("/content/drive/MyDrive", DP)
 os.makedirs(GLOBAL_DIR, exist_ok=True)
 print(f"✅ Storage linked: {DP}")
@@ -42,7 +43,8 @@ cells.append({
     'source': to_lines(f'''
 import os, subprocess, base64
 SL = base64.b64decode("{SL_B64}").decode("utf-8")
-WORK_ROOT = "/content/audio-core"
+# WORK_ROOT: RVCVoiceCloning
+WORK_ROOT = "/content/RVCVoiceCloning"
 if not os.path.exists(WORK_ROOT):
     subprocess.run(["git", "clone", SL, WORK_ROOT], check=True)
 os.chdir(WORK_ROOT)
@@ -55,8 +57,9 @@ cells.append({
     'cell_type': 'code', 'execution_count': None, 'metadata': {}, 'outputs': [],
     'source': to_lines('''
 import os, subprocess
-if os.path.exists("/content/audio-core"):
-    os.chdir("/content/audio-core")
+W_ROOT = "/content/RVCVoiceCloning"
+if os.path.exists(W_ROOT):
+    os.chdir(W_ROOT)
     subprocess.run(["git", "fetch", "--all"], check=True)
     subprocess.run(["git", "reset", "--hard", "origin/main"], check=True)
     print("✅ Sync complete.")
@@ -69,7 +72,7 @@ import os, shutil, subprocess, sys, requests, json, torch, glob, re, base64, sit
 from pathlib import Path
 from google.colab import files
 
-os.chdir("/content/audio-core")
+os.chdir("/content/RVCVoiceCloning")
 WORK_ID = "experiment_01" # @param {type:"string"}
 ITERATIONS = 200 # @param {type:"integer"}
 CHK_FREQ = 50 # @param {type:"integer"}
@@ -155,8 +158,8 @@ else:
         os.makedirs(sub, exist_ok=True)
         Path(os.path.join(sub, "__init__.py")).touch()
 
-    D_ABS = f"/content/audio-core/dataset/{WORK_ID}"
-    L_ABS = f"/content/audio-core/logs/{WORK_ID}"
+    D_ABS = "/content/RVCVoiceCloning/dataset" + f"/{WORK_ID}"
+    L_ABS = "/content/RVCVoiceCloning/logs" + f"/{WORK_ID}"
     os.makedirs(D_ABS, exist_ok=True)
     os.makedirs(L_ABS, exist_ok=True)
     for rf in RAW_FILES: shutil.move(rf, f"{D_ABS}/{rf}")
@@ -191,9 +194,12 @@ else:
     step(f'python -m infer.modules.train.train -e "{WORK_ID}" -sr {SAMPLING_RATE} -se {CHK_FREQ} -bs 4 -te {ITERATIONS} -pg assets/pretrained_v2/f0G40k.pth -pd assets/pretrained_v2/f0D40k.pth -f0 1 -l 1 -c 0 -sw 1 -v {VERSION}')
     step(f'python -m infer.modules.train.train_index "{WORK_ID}" {VERSION} {ITERATIONS} "{L_ABS}"')
 
+    # Backup to Drive
+    DP = base64.b64decode("UlZDVm9pY2VDbG9uaW5n").decode("utf-8")
+    GLOBAL_DIR = os.path.join("/content/drive/MyDrive", DP)
     GD_OUT = f"{GLOBAL_DIR}/{WORK_ID}"
     os.makedirs(GD_OUT, exist_ok=True)
-    # Search aggressively for trained weight
+    
     FINAL_PTH = sorted(glob.glob(f"weights/{WORK_ID}*.pth") + glob.glob(f"**/weights/{WORK_ID}*.pth", recursive=True))
     FINAL_IDX = sorted(glob.glob(f"{L_ABS}/*.index"))
     if FINAL_PTH:
@@ -216,13 +222,12 @@ import os, torch, glob, base64
 from google.colab import files
 from core.inference import VoiceConverter
 
-os.chdir("/content/audio-core")
-DP = base64.b64decode("QXVkaW9fTW9kZWxz").decode("utf-8")
+os.chdir("/content/RVCVoiceCloning")
+DP = base64.b64decode("UlZDVm9pY2VDbG9uaW5n").decode("utf-8")
 GLOBAL_DIR = os.path.join("/content/drive/MyDrive", DP)
 
 print("🔍 Scanning for models...")
 MODELS = []
-# Locations to scan
 SCAN_PATHS = ["weights", "assets/weights", "models", GLOBAL_DIR]
 
 for s_path in SCAN_PATHS:
@@ -231,13 +236,11 @@ for s_path in SCAN_PATHS:
             for f in files_list:
                 if f.endswith(".pth") or f == "model.pth":
                     full_p = os.path.abspath(os.path.join(root, f))
-                    # Label construction
                     prefix = "[Drive]" if GLOBAL_DIR in full_p else "[Local]"
                     rel = os.path.relpath(full_p, s_path) if s_path != GLOBAL_DIR else os.path.basename(os.path.dirname(full_p))
                     MODELS.append({"name": f"{prefix} {rel}/{f}", "path": full_p})
 
-# Remove duplicates
-seen = {m['path'] for m in []}
+seen = set()
 UNIQUE_MODELS = []
 for m in MODELS:
     if m['path'] not in seen:
@@ -249,9 +252,7 @@ if not UNIQUE_MODELS:
     MANUAL_PATH = input("Please enter absolute path to model.pth manually: ")
     if os.path.exists(MANUAL_PATH):
         SELECTED_PATH = MANUAL_PATH
-        VOICE_NAME = "manual_voice"
     else:
-        print("🛑 Error: Manual path does not exist.")
         SELECTED_PATH = None
 else:
     for idx, m in enumerate(UNIQUE_MODELS): print(f"{idx}: {m['name']}")
@@ -262,10 +263,8 @@ else:
         SELECTED_PATH = choice
     else:
         SELECTED_PATH = UNIQUE_MODELS[0]['path']
-        print(f"⚠️ Invalid choice, defaulting to: {SELECTED_PATH}")
 
 if SELECTED_PATH:
-    print(f"🎯 Ready: {SELECTED_PATH}")
     uploaded = files.upload()
     if uploaded:
         src_f = list(uploaded.keys())[0]
@@ -275,7 +274,7 @@ if SELECTED_PATH:
         runner = VoiceConverter(SELECTED_PATH, device=device)
         runner.convert(src_f, out_f)
         files.download(out_f)
-        print(f"✅ Conversion complete: {out_f}")
+        print(f"✅ Conversion complete.")
 '''
 
 cells.append({
@@ -292,4 +291,4 @@ notebook = {
 
 with open('/Users/bherulal.mali/Downloads/rvcStudioAG/RVCVoiceCloning/notebooks/rvc_colab.ipynb', 'w', encoding='utf-8') as f:
     json.dump(notebook, f, indent=2)
-print("SUCCESS (v21 Deploy)")
+print("SUCCESS (v22 Deploy)")
