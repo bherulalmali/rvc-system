@@ -117,21 +117,13 @@ else:
                 except: pass
             break
 
-    # Entry point patching
-    for rp in ["infer/modules/train/extract_feature_print.py", "infer/lib/train/utils.py", "infer/modules/train/train.py"]:
-        if os.path.exists(rp):
-            try:
-                with open(rp, "r") as f: c = f.read()
-                if "torch.load(" in c and "weights_only" not in c:
-                    nc = re.sub(r"(torch\.load\([^)]+)(\))", r"\1, weights_only=False\2", c)
-                    with open(rp, "w") as f: f.write(nc)
-            except: pass
-
     # Directory preparation
     D_ABS = "/content/RVCVoiceCloning/dataset" + f"/{WORK_ID}"
     L_ABS = "/content/RVCVoiceCloning/logs" + f"/{WORK_ID}"
     os.makedirs(D_ABS, exist_ok=True)
     os.makedirs(L_ABS, exist_ok=True)
+    os.makedirs("/content/RVCVoiceCloning/assets/weights", exist_ok=True)
+    os.makedirs("/content/RVCVoiceCloning/weights", exist_ok=True)
     for rf in RAW_FILES: shutil.move(rf, f"{D_ABS}/{rf}")
     
     CFG_SRC = f"configs/{VERSION}/{SAMPLING_RATE}.json"
@@ -148,7 +140,8 @@ else:
     def step(c): 
         print(f'   🔸 {c}')
         res = subprocess.run(c, shell=True, capture_output=True, text=True)
-        if res.returncode != 0:
+        # Handle RVC's weird exit code (2333333 % 256 = 165)
+        if res.returncode != 0 and res.returncode != 165:
             print(f'❌ FAILED: {c}\n\nSTDOUT:\n{res.stdout}\n\nSTDERR:\n{res.stderr}')
             raise RuntimeError("Task Aborted")
 
@@ -160,33 +153,25 @@ else:
     step(f'python -m infer.modules.train.train -e "{WORK_ID}" -sr {SAMPLING_RATE} -se {CHK_FREQ} -bs 4 -te {ITERATIONS} -pg assets/pretrained_v2/f0G40k.pth -pd assets/pretrained_v2/f0D40k.pth -f0 1 -l 1 -c 0 -sw 1 -v {VERSION}')
     step(f'python -m infer.modules.train.train_index "{WORK_ID}" {VERSION} {ITERATIONS} "{L_ABS}"')
 
-    # Aggressive Backup to Drive
+    # Backup to Drive
     DP = base64.b64decode("UlZDVm9pY2VDbG9uaW5n").decode("utf-8")
     BACKUP_ROOT = os.path.join("/content/drive/MyDrive", DP, WORK_ID)
     os.makedirs(BACKUP_ROOT, exist_ok=True)
     
-    # Locate weight (pth) - VERY Aggressive
+    # Locate weight (pth) - Ultra Aggressive
     weight_pth = None
-    possible_pth = [
-        f"weights/{WORK_ID}.pth",
-        f"weights/{WORK_ID}_v2.pth",
-        f"assets/weights/{WORK_ID}.pth"
-    ]
-    # Check possible paths
-    for p in possible_pth:
-        if os.path.exists(p):
-            weight_pth = p
-            break
-    # Fallback to general glob if still not found
-    if not weight_pth:
-        matches = sorted(glob.glob(f"**/{WORK_ID}*.pth", recursive=True))
-        if matches: weight_pth = matches[-1]
+    for root, _, files_list in os.walk("/content/RVCVoiceCloning"):
+        for f in files_list:
+            if f.endswith(".pth") and WORK_ID in f:
+                weight_pth = os.path.join(root, f)
+                break
+        if weight_pth: break
     
     if weight_pth:
         shutil.copy(weight_pth, os.path.join(BACKUP_ROOT, "model.pth"))
         print(f"✅ Model weight backed up: {os.path.basename(weight_pth)}")
     else:
-        print(f"⚠️ Model weight not found for backup in {os.getcwd()}")
+        print(f"⚠️ Warning: Model weight ({WORK_ID}) not found in workspace.")
     
     # Locate index
     index_matches = sorted(glob.glob(f"{L_ABS}/*.index") + glob.glob(f"**/{WORK_ID}*.index", recursive=True))
@@ -208,77 +193,73 @@ import os, torch, glob, base64, sys, subprocess
 from google.colab import files
 from core.inference import VoiceConverter
 
-W_ROOT = "/content/RVCVoiceCloning"
-if W_ROOT not in sys.path: sys.path.append(W_ROOT)
-os.chdir(W_ROOT)
-
+os.chdir("/content/RVCVoiceCloning")
 DP = base64.b64decode("UlZDVm9pY2VDbG9uaW5n").decode("utf-8")
 GLOBAL_DIR = os.path.join("/content/drive/MyDrive", DP)
 
-print("🔍 Searching for voices...")
+print("🔍 Scanning for available voices...")
 MODELS = []
-# Aggressive Scan
-SCAN_PATHS = [GLOBAL_DIR, "weights", "models", "assets/weights"]
+SCAN_PATHS = [GLOBAL_DIR, "assets/weights", "weights"]
 
 for s_path in SCAN_PATHS:
     if os.path.exists(s_path):
-        for root, dirs, files_list in os.walk(s_path):
+        for root, _, files_list in os.walk(s_path):
             for f in files_list:
                 if f.endswith(".pth") or f == "model.pth":
                     full_p = os.path.abspath(os.path.join(root, f))
-                    # Label construction
-                    if f == "model.pth":
-                        name = os.path.basename(root)
-                    else:
-                        name = f.replace(".pth", "")
+                    # Labels
+                    if f == "model.pth": name = os.path.basename(root)
+                    else: name = f.replace(".pth", "")
                     
-                    category = "Drive" if GLOBAL_DIR in full_p else "Local"
-                    MODELS.append({"label": f"[{category}] {name}", "path": full_p})
+                    if "hubert" in name.lower() or "rmvpe" in name.lower() or "pretrained" in name.lower(): continue
+                    
+                    source = "Drive" if GLOBAL_DIR in full_p else "Local"
+                    MODELS.append({"label": f"[{source}] {name}", "path": full_p})
 
 # Dedup
 seen = set()
 UNIQUE_MODELS = []
 for m in MODELS:
     if m['path'] not in seen:
-        UNIQUE_MODELS.append(m)
-        seen.add(m['path'])
+        UNIQUE_MODELS.append(m); seen.add(m['path'])
 
 if not UNIQUE_MODELS:
-    print("❌ No models found. Make sure Phase 4 completed successfully.")
-else:
-    for idx, m in enumerate(UNIQUE_MODELS): print(f"{idx}: {m['label']}")
-    
-    print("\n--- VOICE CONVERSION ---")
-    voice_idx = int(input("Select Voice ID: ") or 0)
-    SELECTED_PATH = UNIQUE_MODELS[voice_idx]['path']
-    print(f"🎯 Target Voice: {UNIQUE_MODELS[voice_idx]['label']}")
+    print("❌ No models matched your search.")
+    MANUAL = input("Enter path to model.pth manually (or leave blank): ")
+    if MANUAL and os.path.exists(MANUAL): UNIQUE_MODELS = [{"label": "[Manual] Hidden", "path": MANUAL}]
+    else: sys.exit("🛑 Please complete Phase 4 first.")
 
-    print("\n📤 Upload your audio (the one you want to change):")
-    uploaded = files.upload()
-    if uploaded:
-        src_f = list(uploaded.keys())[0]
-        out_f = f"/content/converted_{os.path.basename(src_f)}"
-        
-        print(f"🪄 Converting...")
-        # Dependency check
-        try:
-            from rvc_python.infer import RVCInference
-        except ImportError:
-            subprocess.run(["pip", "install", "rvc-python"], capture_output=True)
-            
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        # Try to find index next to pth
-        base_dir = os.path.dirname(SELECTED_PATH)
-        idx_p = os.path.join(base_dir, "features.index")
-        if not os.path.exists(idx_p):
-            idx_search = glob.glob(f"{base_dir}/*.index")
-            idx_p = idx_search[-1] if idx_search else None
-        
-        runner = VoiceConverter(SELECTED_PATH, device=device)
-        runner.convert(src_f, out_f, index_path=idx_p)
-        
-        print(f"✅ Conversion complete!")
-        files.download(out_f)
+for idx, m in enumerate(UNIQUE_MODELS): print(f"{idx}: {m['label']}")
+
+# USER INPUTS
+print("\n--- VOICE CONVERSION CONFIG ---")
+voice_id = int(input("Select Voice ID: ") or 0)
+SELECTED_VOICE = UNIQUE_MODELS[voice_id]
+print(f"🎯 Selected: {SELECTED_VOICE['label']}")
+
+print("\n📤 Upload the audio file you want to convert:")
+uploaded = files.upload()
+if uploaded:
+    src_f = list(uploaded.keys())[0]
+    out_f = f"/content/converted_{os.path.basename(src_f)}"
+    
+    print("\n🪄 Applying Voice Conversion...")
+    try:
+        from rvc_python.infer import RVCInference
+    except ImportError:
+        subprocess.run(["pip", "install", "rvc-python"], capture_output=True)
+    
+    # Auto-index discovery
+    idx_p = os.path.join(os.path.dirname(SELECTED_VOICE['path']), "features.index")
+    if not os.path.exists(idx_p):
+        idx_search = glob.glob(f"{os.path.dirname(SELECTED_VOICE['path'])}/*.index")
+        idx_p = idx_search[-1] if idx_search else None
+    
+    runner = VoiceConverter(SELECTED_VOICE['path'], device="cuda" if torch.cuda.is_available() else "cpu")
+    runner.convert(src_f, out_f, index_path=idx_p)
+    
+    print(f"✅ Conversion complete!")
+    files.download(out_f)
 '''
 
 cells.append({
@@ -295,4 +276,4 @@ notebook = {
 
 with open('/Users/bherulal.mali/Downloads/rvcStudioAG/RVCVoiceCloning/notebooks/rvc_colab.ipynb', 'w', encoding='utf-8') as f:
     json.dump(notebook, f, indent=2)
-print("SUCCESS (v25 Deploy)")
+print("SUCCESS (v26 Final Deploy)")
