@@ -29,7 +29,6 @@ from google.colab import drive
 import os, base64
 from pathlib import Path
 drive.mount("/content/drive")
-# DP: RVCVoiceCloning
 DP = base64.b64decode("UlZDVm9pY2VDbG9uaW5n").decode("utf-8")
 GLOBAL_DIR = os.path.join("/content/drive/MyDrive", DP)
 os.makedirs(GLOBAL_DIR, exist_ok=True)
@@ -43,7 +42,6 @@ cells.append({
     'source': to_lines(f'''
 import os, subprocess, base64
 SL = base64.b64decode("{SL_B64}").decode("utf-8")
-# WORK_ROOT: RVCVoiceCloning
 WORK_ROOT = "/content/RVCVoiceCloning"
 if not os.path.exists(WORK_ROOT):
     subprocess.run(["git", "clone", SL, WORK_ROOT], check=True)
@@ -88,7 +86,8 @@ else:
     def execute(cmd): return subprocess.run(cmd, shell=True, capture_output=True, text=True)
     print("📦 Installing environment dependencies...")
     execute('pip install --no-cache-dir ninja "numpy<2.0" omegaconf==2.3.0 hydra-core==1.3.2 antlr4-python3-runtime==4.9.3 bitarray sacrebleu')
-    execute('pip install --no-cache-dir librosa==0.9.1 faiss-cpu praat-parselmouth==0.4.3 pyworld==0.3.4 tensorboardX torchcrepe ffmpeg-python av scipy')
+    execute('pip install --no-cache-dir librosa==0.9.1 faiss-cpu praat-parselmouth==0.4.3 pyworld==0.3.4 tensorboardX torchcrepe ffmpeg-python av scipy "numba>=0.58.0"')
+    execute('pip install --no-cache-dir rvc-python')
     execute('pip install --no-cache-dir --no-deps fairseq==0.12.2')
 
     print("🛡️ Applying Robust System-Level Hardening (Python 3.12)...")
@@ -218,17 +217,21 @@ cells.append({
 
 # Phase 5: Voice Selection & Inference
 p5_code = r'''
-import os, torch, glob, base64
+import os, torch, glob, base64, sys
 from google.colab import files
 from core.inference import VoiceConverter
 
-os.chdir("/content/RVCVoiceCloning")
+W_ROOT = "/content/RVCVoiceCloning"
+if W_ROOT not in sys.path: sys.path.append(W_ROOT)
+os.chdir(W_ROOT)
+
 DP = base64.b64decode("UlZDVm9pY2VDbG9uaW5n").decode("utf-8")
 GLOBAL_DIR = os.path.join("/content/drive/MyDrive", DP)
 
 print("🔍 Scanning for models...")
 MODELS = []
-SCAN_PATHS = ["weights", "assets/weights", "models", GLOBAL_DIR]
+# Locations to scan aggressively
+SCAN_PATHS = ["weights", "assets/weights", "models", "/content/RVCVoiceCloning/logs", GLOBAL_DIR]
 
 for s_path in SCAN_PATHS:
     if os.path.exists(s_path):
@@ -236,9 +239,13 @@ for s_path in SCAN_PATHS:
             for f in files_list:
                 if f.endswith(".pth") or f == "model.pth":
                     full_p = os.path.abspath(os.path.join(root, f))
+                    # Cleaner name selection
                     prefix = "[Drive]" if GLOBAL_DIR in full_p else "[Local]"
-                    rel = os.path.relpath(full_p, s_path) if s_path != GLOBAL_DIR else os.path.basename(os.path.dirname(full_p))
-                    MODELS.append({"name": f"{prefix} {rel}/{f}", "path": full_p})
+                    if f == "model.pth":
+                        name = os.path.basename(os.path.dirname(full_p))
+                    else:
+                        name = f.replace(".pth", "")
+                    MODELS.append({"name": f"{prefix} {name}", "path": full_p})
 
 seen = set()
 UNIQUE_MODELS = []
@@ -253,6 +260,7 @@ if not UNIQUE_MODELS:
     if os.path.exists(MANUAL_PATH):
         SELECTED_PATH = MANUAL_PATH
     else:
+        print("🛑 Error: Manual path does not exist.")
         SELECTED_PATH = None
 else:
     for idx, m in enumerate(UNIQUE_MODELS): print(f"{idx}: {m['name']}")
@@ -262,19 +270,32 @@ else:
     elif os.path.exists(choice):
         SELECTED_PATH = choice
     else:
-        SELECTED_PATH = UNIQUE_MODELS[0]['path']
+        try:
+            SELECTED_PATH = UNIQUE_MODELS[int(choice or 0)]['path']
+        except:
+            SELECTED_PATH = UNIQUE_MODELS[0]['path']
+            print(f"⚠️ Defaulting to: {UNIQUE_MODELS[0]['name']}")
 
 if SELECTED_PATH:
+    print(f"🎯 Loaded model: {SELECTED_PATH}")
     uploaded = files.upload()
     if uploaded:
         src_f = list(uploaded.keys())[0]
         out_f = f"/content/output_{os.path.basename(src_f)}"
-        print(f"🪄 Converting {src_f}...")
+        print(f"🪄 Converting audio...")
+        
+        # Ensure rvc-python is actually usable
+        try:
+            from rvc_python.infer import RVCInference
+        except ImportError:
+            print("📦 Installing rvc-python on the fly...")
+            subprocess.run(["pip", "install", "rvc-python"], capture_output=True)
+            
         device = "cuda" if torch.cuda.is_available() else "cpu"
         runner = VoiceConverter(SELECTED_PATH, device=device)
         runner.convert(src_f, out_f)
         files.download(out_f)
-        print(f"✅ Conversion complete.")
+        print(f"✅ Conversion complete. Download your file.")
 '''
 
 cells.append({
@@ -291,4 +312,4 @@ notebook = {
 
 with open('/Users/bherulal.mali/Downloads/rvcStudioAG/RVCVoiceCloning/notebooks/rvc_colab.ipynb', 'w', encoding='utf-8') as f:
     json.dump(notebook, f, indent=2)
-print("SUCCESS (v22 Deploy)")
+print("SUCCESS (v23 Deploy)")
