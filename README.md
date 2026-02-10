@@ -82,6 +82,9 @@ rvc-system/
 │   │   ├── inference/        # Conversion logic
 │   │   └── audio/            # Signal processing utils
 │   └── utils/                # Device and Registry management
+├── scripts/
+│   ├── download_pretrained.py # Initial model setup
+│   └── setup.sh              # Environment automation
 ├── notebooks/
 │   └── rvc_colab.ipynb       # GPU-accelerated notebook
 ├── requirements.txt          # Mandatory dependencies
