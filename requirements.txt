@@ -2,11 +2,16 @@
 gradio==3.50.2
 huggingface-hub==0.19.4
 
-# Core (Install manually to avoid conflict)
-# rvc-python>=0.1.5
+# ML Core
+torch
+librosa
+numpy
+fairseq
+scipy
+soundfile
 
 # Utilities
 pyyaml>=6.0
 tqdm>=4.65.0
 omegaconf>=2.3.0
-
+psutil
