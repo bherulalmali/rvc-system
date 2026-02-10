@@ -15,8 +15,8 @@ cells = []
 cells.append({
     'cell_type': 'markdown', 'metadata': {},
     'source': to_lines('''
-# 🎙️ RVC Voice Cloning Studio - Venv Isolation (v28)
-Strict virtual environment execution for maximum stability.
+# 🎙️ RVC Voice Cloning Studio - Robust Venv (v29)
+Strict virtual environment execution with automatic repair logic.
 ''')
 })
 
@@ -35,11 +35,11 @@ print(f"✅ Google Drive Linked: {GLOBAL_DIR}")
 ''')
 })
 
-# Phase 2: Environment & Venv
+# Phase 2: Environment & Robust Venv
 cells.append({
     'cell_type': 'code', 'execution_count': None, 'metadata': {}, 'outputs': [],
     'source': to_lines(f'''
-import os, subprocess, base64
+import os, subprocess, base64, sys
 SL = base64.b64decode("{SL_B64}").decode("utf-8")
 WORK_ROOT = "/content/RVCVoiceCloning"
 if not os.path.exists(WORK_ROOT):
@@ -48,7 +48,21 @@ os.chdir(WORK_ROOT)
 
 if not os.path.exists("venv"):
     print("🛠️ Creating Virtual Environment (venv)...")
-    subprocess.run(["python3", "-m", "venv", "venv"], check=True)
+    try:
+        subprocess.run(["python3", "-m", "venv", "venv"], check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError:
+        print("⚠️ Standard venv creation failed. Attempting to install python3-venv...")
+        subprocess.run(["apt-get", "update"], capture_output=True)
+        v = f"{{sys.version_info.major}}.{{sys.version_info.minor}}"
+        subprocess.run(["apt-get", "install", "-y", f"python{{v}}-venv"], capture_output=True)
+        try:
+            subprocess.run(["python3", "-m", "venv", "venv"], check=True)
+        except:
+            print("🛑 Error: Could not create venv. Falling back to system python.")
+            os.makedirs("venv/bin", exist_ok=True)
+            if not os.path.exists("venv/bin/python"):
+                os.symlink(sys.executable, "venv/bin/python")
+                os.symlink(sys.executable.replace("python", "pip"), "venv/bin/pip")
 
 print(f"✅ Environment initialized at: {{os.getcwd()}}")
 print("✅ Venv ready for absolute isolation.")
@@ -76,13 +90,13 @@ from pathlib import Path
 from google.colab import files
 
 os.chdir("/content/RVCVoiceCloning")
-VENV_PY = "/content/RVCVoiceCloning/venv/bin/python"
-VENV_PIP = "/content/RVCVoiceCloning/venv/bin/pip"
+VENV_PY = os.path.abspath("venv/bin/python")
+VENV_PIP = os.path.abspath("venv/bin/pip")
 
-# Ensure venv packages are in sys.path for this cell's execution
 import sys
-v_site = glob.glob("/content/RVCVoiceCloning/venv/lib/python*/site-packages")[0]
-if v_site not in sys.path: sys.path.insert(0, v_site)
+v_sites = glob.glob("/content/RVCVoiceCloning/venv/lib/python*/site-packages")
+if v_sites:
+  if v_sites[0] not in sys.path: sys.path.insert(0, v_sites[0])
 
 PERSON_NAME = "MyVoice" # @param {type:"string"}
 ITERATIONS = 200 # @param {type:"integer"}
@@ -97,21 +111,21 @@ RAW_FILES = list(uploaded.keys())
 if not RAW_FILES:
     print("⚠️ No input files.")
 else:
-    def execute(cmd): return subprocess.run(f"{VENV_PIP} {cmd}", shell=True, capture_output=True, text=True)
-    print("📦 Installing core dependencies in venv...")
+    def execute(cmd): 
+        print(f"📦 Installing: {cmd}")
+        return subprocess.run(f"{VENV_PIP} {cmd}", shell=True, capture_output=True, text=True)
+    
     execute('install --no-cache-dir ninja "numpy<2.0" omegaconf==2.3.0 hydra-core==1.3.2 antlr4-python3-runtime==4.9.3 bitarray sacrebleu')
     execute('install --no-cache-dir librosa==0.9.1 faiss-cpu praat-parselmouth==0.4.3 pyworld==0.3.4 tensorboardX torchcrepe ffmpeg-python av scipy "numba>=0.58.0"')
     execute('install --no-cache-dir rvc-python')
     execute('install --no-cache-dir --no-deps fairseq==0.12.2')
 
     print("🛡️ Applying Python 3.12 compatibility fixes in venv...")
-    v_lib = os.path.dirname(os.path.dirname(v_site))
-    d_path = os.path.join(v_lib, "dataclasses.py")
-    if not os.path.exists(d_path):
-        matches = glob.glob("/content/RVCVoiceCloning/venv/lib/python*/dataclasses.py")
-        if matches: d_path = matches[0]
+    d_path = None
+    matches = glob.glob("/content/RVCVoiceCloning/venv/lib/python*/dataclasses.py")
+    if matches: d_path = matches[0]
 
-    if os.path.exists(d_path):
+    if d_path and os.path.exists(d_path):
         with open(d_path, "r") as f: content = f.read()
         target = "if f._field_type is _FIELD and f.default.__class__.__hash__ is None:"
         if target in content:
@@ -153,7 +167,7 @@ else:
             print(f'❌ FAILED: {c}\n\nSTDOUT:\n{res.stdout}\n\nSTDERR:\n{res.stderr}')
             raise RuntimeError("Task Aborted")
 
-    # Run Training via venv modules
+    # Run Training
     SR_VAL = SAMPLING_RATE.replace("k", "000")
     step(f'core.training.preprocess "{INP_DIR}" {SR_VAL} 2 "{OUT_DIR}" False 3.0')
     step(f'core.training.extract.extract_f0_print "{OUT_DIR}" 2 rmvpe')
@@ -166,7 +180,6 @@ else:
     BACKUP_ROOT = os.path.join("/content/drive/MyDrive", DP, "models", PERSON_NAME)
     os.makedirs(BACKUP_ROOT, exist_ok=True)
     
-    # Locate weight & index
     weight_pth = None
     for root, _, files_list in os.walk("/content/RVCVoiceCloning"):
         for f in files_list:
@@ -198,12 +211,12 @@ import os, torch, glob, base64, sys, subprocess
 from google.colab import files
 
 os.chdir("/content/RVCVoiceCloning")
-VENV_PY = "/content/RVCVoiceCloning/venv/bin/python"
-VENV_PIP = "/content/RVCVoiceCloning/venv/bin/pip"
+VENV_PY = os.path.abspath("venv/bin/python")
+VENV_PIP = os.path.abspath("venv/bin/pip")
 
-# Sync sys.path with venv
-v_site = glob.glob("/content/RVCVoiceCloning/venv/lib/python*/site-packages")[0]
-if v_site not in sys.path: sys.path.insert(0, v_site)
+v_sites = glob.glob("/content/RVCVoiceCloning/venv/lib/python*/site-packages")
+if v_sites:
+  if v_sites[0] not in sys.path: sys.path.insert(0, v_sites[0])
 if "/content/RVCVoiceCloning/src" not in sys.path: sys.path.append("/content/RVCVoiceCloning/src")
 
 from core.inference import VoiceConverter
@@ -274,4 +287,4 @@ notebook = {
 
 with open('/Users/bherulal.mali/Downloads/rvcStudioAG/RVCVoiceCloning/notebooks/rvc_colab.ipynb', 'w', encoding='utf-8') as f:
     json.dump(notebook, f, indent=2)
-print("SUCCESS (v28 Venv Isolation)")
+print("SUCCESS (v29 Robust Venv - CLEAN")
