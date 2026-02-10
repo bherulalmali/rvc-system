@@ -175,10 +175,10 @@ def convert_voice_ui(
         return None, f"❌ Error: Model not found for voice '{target_voice}'."
     
     try:
-        # Create temporary output file
-        output_dir = Path("data/outputs")
+        # Create person-specific output folder
+        output_dir = Path("data/outputs") / target_voice
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"{Path(source_audio).stem}_converted.wav"
+        output_path = output_dir / f"{Path(source_audio).stem}_{target_voice}.wav"
         
         # Auto-detect index file in the same directory as the model
         index_path = None
